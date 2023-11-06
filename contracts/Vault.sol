@@ -1,53 +1,102 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity ^0.8.4;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import "./interfaces/IGauge.sol";
+import "./interfaces/IBooster.sol";
+import "./interfaces/IClaimZap.sol";
+import "./interfaces/IBaseRewardPool.sol";
 
-error ZeroAddress;
-error InvalidLPToken;
+error ZeroAmount();
 
 contract Vault is Ownable {
     using SafeERC20 for IERC20;
 
-    address constant CRVToken = 0xD533a949740bb3306d119CC777fa900bA034cd52;
-    address constant CVXToken = 0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B;
+    IERC20 public constant CRVToken =
+        IERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
+    IERC20 public constant CVXToken =
+        IERC20(0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B);
+    IClaimZap public constant CLAIMZAP =
+        IClaimZap(0x3f29cB4111CbdA8081642DA1f75B3c12DECf2516);
+    IBooster public constant CVXBooster =
+        IBooster(0xF403C135812408BFbE8713b5A23a04b3D48AAE31);
+    IBaseRewardPool public immutable REWARDPOOL;
+
+    IERC20 public lpToken;
+    uint256 public immutable lpPID;
 
     uint256 public totalDeposit;
-    uint256 public accTokenPerShare;
+    uint256 public crvPerShare;
+    uint256 public cvxPerShare;
 
-    mapping(address => address) public curveGauge;
+    uint256 internal constant MULTIPLIER = 1e18;
+
     mapping(address => UserInfo) public userInfo;
     struct UserInfo {
         uint256 amount;
-        uint256 userShare;
-        uint256 pendingAmt;
+        uint256 crvShare;
+        uint256 cvxShare;
+        uint256 crvPending;
+        uint256 cvxPending;
     }
 
-    event UpdateLP(address indexed lp, address indexed gauge);
+    event Deposit(address indexed account, uint256 amount);
 
-    function(address lp, address gauge) external onlyOwner {
-        if(lp == address(0) || gauge == address(0)) revert ZeroAddress();
+    constructor(address _lpToken, uint256 _lpPid) {
+        lpToken = IERC20(_lpToken);
+        lpPID = _lpPid;
 
-        curveGauge[lp] = gauge;
+        lpToken.approve(address(CVXBooster), type(uint256).max);
 
-        emit UpdateLP(lp, gauge);
+        REWARDPOOL = IBaseRewardPool(CVXBooster.poolInfo(_lpPid).crvRewards);
     }
 
-    function deposit(address lp, uint256 amount) external {
-        address storage gauge = curveGauge[lp];
-        if(gauge == address(0)) revert InvalidLPToken();
+    function _updateUserInfo(uint256 amount) internal {
+        UserInfo storage info = userInfo[msg.sender];
+        unchecked {
+            if (crvPerShare > info.crvShare) {
+                info.crvPending +=
+                    (info.amount * (crvPerShare - info.crvShare)) /
+                    MULTIPLIER;
+                info.crvShare = crvPerShare;
+            }
+
+            if (cvxPerShare > info.cvxShare) {
+                info.cvxShare +=
+                    (info.amount * (cvxPerShare - info.cvxShare)) /
+                    MULTIPLIER;
+                info.cvxShare = cvxPerShare;
+            }
+        }
+
+        if (amount != 0) info.amount += amount;
+    }
+
+    function deposit(uint256 amount) external {
+        if (amount == 0) revert ZeroAmount();
 
         // transfer token first
-        IERC20(lp).safeTransferFrom(msg.sender, address(this), amount);
+        lpToken.safeTransferFrom(msg.sender, address(this), amount);
 
-        // approve and deposit to curve gauge
-        IERC20(lp).approve(gauge, amount);
-        IGauge(gauge).deposit(amount);
+        // deposit to convex
+        CVXBooster.deposit(lpPID, amount, true);
 
         // update user info
+        _updateUserInfo(amount);
 
+        // update totalDeposit
+        totalDeposit += amount;
+
+        emit Deposit(msg.sender, amount);
+    }
+
+    function withdraw(uint256 amount) external {
+        if (amount == 0) revert ZeroAmount();
+
+        UserInfo storage info = userInfo[msg.sender];
+        if (amount > info.amount) amount = info.amount;
+
+        //
     }
 }
