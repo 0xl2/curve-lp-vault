@@ -2,15 +2,12 @@ require("@nomicfoundation/hardhat-toolbox");
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: "0.8.19",
+  defaultNetwork: 'hardhat',
   networks: {
     hardhat: {
       forking: {
-        url: "https://rpc.ankr.com/bsc",
-        // url: "https://bscrpc.com",
-        // url: "https://bsc-dataseed1.binance.org/",
+        url: "https://rpc.ankr.com/ethereum",
         enabled: true,
-        blockNumber: 25710942,
       },
     }
   },

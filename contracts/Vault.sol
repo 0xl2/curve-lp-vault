@@ -2,20 +2,21 @@
 pragma solidity ^0.8.4;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
+import "./interfaces/ICVX.sol";
 import "./interfaces/IBooster.sol";
 import "./interfaces/IBaseRewardPool.sol";
 
 error ZeroAmount();
 
-contract Vault is Ownable {
+contract Vault {
+    using SafeERC20 for ICVX;
     using SafeERC20 for IERC20;
 
     IERC20 public constant CRVToken =
         IERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
-    IERC20 public constant CVXToken =
-        IERC20(0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B);
+    ICVX public constant CVXToken =
+        ICVX(0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B);
     // IClaimZap public constant CLAIMZAP =
     //     IClaimZap(0x3f29cB4111CbdA8081642DA1f75B3c12DECf2516);
     IBooster public constant CVXBooster =
@@ -23,37 +24,37 @@ contract Vault is Ownable {
     IBaseRewardPool public immutable REWARDPOOL;
 
     IERC20 public lpToken;
-    uint256 public immutable lpPID;
+    uint public immutable lpPID;
 
-    uint256 public totalDeposit;
-    uint256 public crvPerShare;
-    uint256 public cvxPerShare;
+    uint public totalDeposit;
+    uint public crvPerShare;
+    uint public cvxPerShare;
 
-    uint256 internal constant MULTIPLIER = 1e18;
+    uint internal constant MULTIPLIER = 1e18;
 
     mapping(address => UserInfo) public userInfo;
     struct UserInfo {
-        uint256 amount;
-        uint256 crvShare;
-        uint256 cvxShare;
-        uint256 crvPending;
-        uint256 cvxPending;
+        uint amount;
+        uint crvShare;
+        uint cvxShare;
+        uint crvPending;
+        uint cvxPending;
     }
 
-    event Deposit(address indexed account, uint256 amount);
-    event Withdraw(address indexed account, uint256 amount);
-    event Claim(address indexed account, uint256 crvReward, uint256 cvxReward);
+    event Deposit(address indexed account, uint amount);
+    event Withdraw(address indexed account, uint amount);
+    event Claim(address indexed account, uint crvReward, uint cvxReward);
 
-    constructor(address _lpToken, uint256 _lpPid) {
+    constructor(address _lpToken, uint _lpPid) {
         lpToken = IERC20(_lpToken);
         lpPID = _lpPid;
 
-        lpToken.approve(address(CVXBooster), type(uint256).max);
+        lpToken.approve(address(CVXBooster), type(uint).max);
 
         REWARDPOOL = IBaseRewardPool(CVXBooster.poolInfo(_lpPid).crvRewards);
     }
 
-    function _updateUserInfo(uint256 amount) internal {
+    function _updateUserInfo(uint amount) internal {
         UserInfo storage info = userInfo[msg.sender];
         unchecked {
             if (crvPerShare > info.crvShare) {
@@ -74,11 +75,11 @@ contract Vault is Ownable {
         if (amount != 0) info.amount += amount;
     }
 
-    function _getReward(uint256 _amount, bool _withdraw) internal {
+    function _getReward(uint _amount, bool _withdraw) internal {
         if (totalDeposit == 0) return;
 
-        uint256 cvxBalance = CVXToken.balanceOf(address(this));
-        uint256 crvBalance = CRVToken.balanceOf(address(this));
+        uint cvxBalance = CVXToken.balanceOf(address(this));
+        uint crvBalance = CRVToken.balanceOf(address(this));
 
         if (_withdraw) {
             REWARDPOOL.withdrawAndUnwrap(_amount, true);
@@ -100,7 +101,7 @@ contract Vault is Ownable {
 
     function _getPending(
         UserInfo memory info
-    ) internal view returns (uint256 crvAmt, uint256 cvxAmt) {
+    ) internal view returns (uint crvAmt, uint cvxAmt) {
         crvAmt = crvPerShare > info.crvShare
             ? info.crvPending +
                 (info.amount * (crvPerShare - info.crvShare)) /
@@ -114,7 +115,7 @@ contract Vault is Ownable {
             : info.cvxPending;
     }
 
-    function deposit(uint256 amount) external {
+    function deposit(uint amount) external {
         if (amount == 0) revert ZeroAmount();
 
         // get reward first
@@ -133,7 +134,7 @@ contract Vault is Ownable {
         emit Deposit(msg.sender, amount);
     }
 
-    function withdraw(uint256 amount) external {
+    function withdraw(uint amount) external {
         if (amount == 0) revert ZeroAmount();
 
         UserInfo storage info = userInfo[msg.sender];
@@ -143,7 +144,7 @@ contract Vault is Ownable {
         _getReward(amount, true);
 
         // update user info
-        (uint256 crvAmt, uint256 cvxAmt) = _getPending(info);
+        (uint crvAmt, uint cvxAmt) = _getPending(info);
         unchecked {
             // if withdraw all them remove user info
             if (amount == info.amount) delete userInfo[msg.sender];
@@ -170,7 +171,7 @@ contract Vault is Ownable {
 
         // update user info
         UserInfo storage info = userInfo[msg.sender];
-        (uint256 crvAmt, uint256 cvxAmt) = _getPending(info);
+        (uint crvAmt, uint cvxAmt) = _getPending(info);
         unchecked {
             info.crvShare = crvPerShare;
             info.cvxShare = cvxPerShare;
@@ -185,7 +186,35 @@ contract Vault is Ownable {
         emit Claim(msg.sender, crvAmt, cvxAmt);
     }
 
+    function _getCVXReward(uint _amount) private view returns (uint) {
+        uint supply = CVXToken.totalSupply();
+        if (supply == 0) {
+            return _amount;
+        }
+
+        uint reductionPerCliff = CVXToken.reductionPerCliff();
+        uint totalCliffs = CVXToken.totalCliffs();
+        uint maxSupply = CVXToken.maxSupply();
+
+        uint cliff = supply / reductionPerCliff;
+        if (cliff < totalCliffs) {
+            uint reduction = totalCliffs - cliff;
+            _amount = (_amount * reduction) / totalCliffs;
+
+            //supply cap check
+            uint amtTillMax = maxSupply - supply;
+            if (_amount > amtTillMax) {
+                _amount = amtTillMax;
+            }
+        }
+
+        return _amount;
+    }
+
     function pendingReward(
         address account
-    ) external view returns (uint256 crvReward, uint256 cvxReward) {}
+    ) external view returns (uint crvReward, uint cvxReward) {
+        crvReward = REWARDPOOL.earned(account);
+        cvxReward = _getCVXReward(crvReward);
+    }
 }
