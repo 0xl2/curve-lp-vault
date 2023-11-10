@@ -7,6 +7,8 @@ import "./interfaces/ICVX.sol";
 import "./interfaces/IBooster.sol";
 import "./interfaces/IBaseRewardPool.sol";
 
+import "hardhat/console.sol";
+
 error ZeroAmount();
 
 contract Vault {
@@ -49,7 +51,7 @@ contract Vault {
         lpToken = IERC20(_lpToken);
         lpPID = _lpPid;
 
-        lpToken.approve(address(CVXBooster), type(uint).max);
+        lpToken.safeApprove(address(CVXBooster), type(uint).max);
 
         REWARDPOOL = IBaseRewardPool(CVXBooster.poolInfo(_lpPid).crvRewards);
     }
@@ -214,7 +216,27 @@ contract Vault {
     function pendingReward(
         address account
     ) external view returns (uint crvReward, uint cvxReward) {
-        crvReward = REWARDPOOL.earned(account);
+        if (totalDeposit == 0) return (0, 0);
+
+        crvReward = REWARDPOOL.earned(address(this));
         cvxReward = _getCVXReward(crvReward);
+
+        uint _crvPerShare = crvReward == 0
+            ? crvPerShare
+            : crvPerShare + ((crvReward * MULTIPLIER) / totalDeposit);
+        uint _cvxPerShare = cvxReward == 0
+            ? cvxPerShare
+            : cvxPerShare + ((cvxReward * MULTIPLIER) / totalDeposit);
+
+        UserInfo memory info = userInfo[account];
+        crvReward =
+            info.crvPending +
+            (info.amount * (_crvPerShare - info.crvShare)) /
+            MULTIPLIER;
+
+        cvxReward =
+            info.cvxPending +
+            (info.amount * (_cvxPerShare - info.cvxShare)) /
+            MULTIPLIER;
     }
 }

@@ -1,11 +1,31 @@
-node_modules
+.DS_Store
+cache/
+artifacts/
+
+coverage*
+/types/
+
+.vscode/*
+!.vscode/settings.json.default
+!.vscode/launch.json.default
+!.vscode/extensions.json.default
+
+node_modules/
 .env
-coverage
-coverage.json
-typechain
-typechain-types
+yarn-error.log
+.package-lock.json
 
-# Hardhat files
-cache
-artifacts
+.yalc
+yalc.lock
 
+contractsInfo.json
+deployments/**/solcinputs
+deployments/goerli
+deployments/sepolia
+
+/.dapp
+
+
+# OpenZeppelin upgradeable files
+.openzeppelin/
+/flatten
