@@ -5,7 +5,7 @@ const {
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-const { parseEther, toBigInt } = ethers
+const { parseEther, MaxUint256 } = ethers
 
 async function unlockAccount(addr) {
   await hre.network.provider.send("hardhat_impersonateAccount", [addr]);
@@ -18,7 +18,7 @@ async function increaseTime(hrVal) {
   await mine(Math.ceil(3600 * hrVal / blockTime));
 }
 
-function getRange(checkAmt, valueAmt) {
+function checkRange(checkAmt, valueAmt) {
   expect(checkAmt).to.be.within(valueAmt * 999n / 1000n, valueAmt * 1001n / 1000n)
 }
 
@@ -59,7 +59,7 @@ describe("Vault test", function () {
   it("Check Alice can deposit lp token", async function () {
     // approve token first
     await this.lpToken.connect(this.alice).approve(this.vaultAddr, this.lpAmt);
-    await this.vault.connect(this.alice).deposit(this.depositAmt);
+    await expect(this.vault.connect(this.alice).deposit(this.depositAmt)).to.emit(this.vault, "Deposit").withArgs(this.alice.address, this.depositAmt);
 
     const lpBal = await this.lpToken.balanceOf(this.alice.address);
     expect(lpBal).to.be.eq(this.lpAmt - this.depositAmt)
@@ -69,33 +69,223 @@ describe("Vault test", function () {
     await increaseTime(24);
 
     await this.lpToken.connect(this.bob).approve(this.vaultAddr, this.lpAmt);
-    await this.vault.connect(this.bob).deposit(this.depositAmt);
+    await expect(this.vault.connect(this.bob).deposit(this.depositAmt)).to.emit(this.vault, "Deposit").withArgs(this.bob.address, this.depositAmt);
 
     const lpBal = await this.lpToken.balanceOf(this.bob.address);
     expect(lpBal).to.be.eq(this.lpAmt - this.depositAmt)
   })
 
-  it("Check Alice's pendingReward and actual reward after withdraw", async function () {
+  it("Check Alice's pendingReward and actual reward after claim", async function () {
     const pendingAlice = await this.vault.pendingReward(this.alice.address);
 
     // call withdraw
-    await this.vault.connect(this.alice).withdraw(this.lpAmt);
+    await expect(this.vault.connect(this.alice).claim()).to.emit(this.vault, "Claim");
 
     const lpBal = await this.lpToken.balanceOf(this.alice.address);
-    expect(lpBal).to.be.eq(this.lpAmt)
+    expect(lpBal).to.be.eq(this.lpAmt - this.depositAmt)
 
     // check actual reward
     const crvBal = await this.crvToken.balanceOf(this.alice.address);
     const cvxBal = await this.cvxToken.balanceOf(this.alice.address);
 
-    getRange(crvBal, pendingAlice.crvReward);
-    getRange(cvxBal, pendingAlice.cvxReward);
+    checkRange(crvBal, pendingAlice.crvReward);
+    checkRange(cvxBal, pendingAlice.cvxReward);
   })
 
   it("Tom deposits twice of Alice's deposit amount", async function () {
+    const depositAmt = this.depositAmt * 2n
     await this.lpToken.connect(this.tom).approve(this.vaultAddr, this.lpAmt);
-    await this.vault.connect(this.tom).deposit(this.depositAmt * 2n);
+    await expect(this.vault.connect(this.tom).deposit(depositAmt)).to.emit(this.vault, "Deposit").withArgs(this.tom.address, depositAmt);
 
-    
+    const lpBal = await this.lpToken.balanceOf(this.tom.address);
+    expect(lpBal).to.be.eq(this.lpAmt - depositAmt)
+  })
+
+  it("Check Alice and Bob's pendingReward ratio after another 1 day passed", async function () {
+    await increaseTime(24);
+
+    const alicePending = await this.vault.pendingReward(this.alice.address);
+    const bobPending = await this.vault.pendingReward(this.bob.address);
+
+    expect(alicePending.crvReward).to.be.gt(0);
+    checkRange(alicePending.crvReward, bobPending.crvReward);
+    checkRange(alicePending.cvxReward, bobPending.cvxReward);
+  });
+
+  it("Check Alice and Tom's pendingReward ratio", async function () {
+    const alicePending = await this.vault.pendingReward(this.alice.address);
+    const tomPending = await this.vault.pendingReward(this.tom.address);
+
+    checkRange(alicePending.crvReward * 2n, tomPending.crvReward);
+    checkRange(alicePending.cvxReward * 2n, tomPending.cvxReward);
+  })
+
+  it("Check pendingReward with actual pending - Alice", async function () {
+    const alicePending = await this.vault.pendingReward(this.alice.address);
+
+    const beforeCRV = await this.crvToken.balanceOf(this.alice.address);
+    const beforeCVX = await this.cvxToken.balanceOf(this.alice.address);
+
+    // claim
+    await expect(this.vault.connect(this.alice).claim()).to.emit(this.vault, "Claim");
+
+    const afterCRV = await this.crvToken.balanceOf(this.alice.address);
+    const afterCVX = await this.cvxToken.balanceOf(this.alice.address);
+
+    checkRange(afterCRV - beforeCRV, alicePending.crvReward);
+    checkRange(afterCVX - beforeCVX, alicePending.cvxReward);
+
+    const alicePending1 = await this.vault.pendingReward(this.alice.address);
+    expect(alicePending1.crvReward).to.be.eq(0)
+    expect(alicePending1.cvxReward).to.be.eq(0)
+  })
+
+  it("Check pendingReward with actual pending - Bob", async function () {
+    const bobPending = await this.vault.pendingReward(this.bob.address);
+
+    const beforeCRV = await this.crvToken.balanceOf(this.bob.address);
+    const beforeCVX = await this.cvxToken.balanceOf(this.bob.address);
+
+    await expect(this.vault.connect(this.bob).claim()).to.emit(this.vault, "Claim");
+
+    const afterCRV = await this.crvToken.balanceOf(this.bob.address);
+    const afterCVX = await this.cvxToken.balanceOf(this.bob.address);
+
+    checkRange(afterCRV - beforeCRV, bobPending.crvReward);
+    checkRange(afterCVX - beforeCVX, bobPending.cvxReward);
+
+    const bobPending1 = await this.vault.pendingReward(this.bob.address);
+    expect(bobPending1.crvReward).to.be.eq(0)
+    expect(bobPending1.cvxReward).to.be.eq(0)
+  })
+
+  it("Check pendingReward with actual pending - Tom", async function () {
+    const tomPending = await this.vault.pendingReward(this.tom.address);
+
+    const beforeCRV = await this.crvToken.balanceOf(this.tom.address);
+    const beforeCVX = await this.cvxToken.balanceOf(this.tom.address);
+
+    // claim
+    await expect(this.vault.connect(this.tom).claim()).to.emit(this.vault, "Claim");
+
+    const afterCRV = await this.crvToken.balanceOf(this.tom.address);
+    const afterCVX = await this.cvxToken.balanceOf(this.tom.address);
+
+    checkRange(afterCRV - beforeCRV, tomPending.crvReward);
+    checkRange(afterCVX - beforeCVX, tomPending.cvxReward);
+
+    const tomPending1 = await this.vault.pendingReward(this.tom.address);
+    expect(tomPending1.crvReward).to.be.eq(0)
+    expect(tomPending1.cvxReward).to.be.eq(0)
+  })
+
+  it("Pass other 1 day and check pendingReward", async function () {
+    await increaseTime(24);
+
+    const alicePending = await this.vault.pendingReward(this.alice.address);
+    const bobPending = await this.vault.pendingReward(this.bob.address);
+    const tomPending = await this.vault.pendingReward(this.tom.address);
+
+    expect(alicePending.crvReward).to.be.gt(0);
+    checkRange(alicePending.crvReward, bobPending.crvReward);
+    checkRange(alicePending.cvxReward, bobPending.cvxReward);
+    checkRange(alicePending.crvReward * 2n, tomPending.crvReward);
+    checkRange(alicePending.cvxReward * 2n, tomPending.cvxReward);
+  })
+
+  it("Alice withdraw his all LP", async function () {
+    const alicePending = await this.vault.pendingReward(this.alice.address);
+    const beforeCRV = await this.crvToken.balanceOf(this.alice.address);
+    const beforeCVX = await this.cvxToken.balanceOf(this.alice.address);
+
+    // withdraw
+    await this.vault.connect(this.alice).withdraw(this.depositAmt);
+
+    // check lpamt
+    const lpAmt = await this.lpToken.balanceOf(this.alice.address);
+    expect(lpAmt).to.be.eq(this.lpAmt);
+
+    const afterCRV = await this.crvToken.balanceOf(this.alice.address);
+    const afterCVX = await this.cvxToken.balanceOf(this.alice.address);
+
+    expect(afterCRV - beforeCRV, alicePending.crvReward);
+    expect(afterCVX - beforeCVX, alicePending.cvxReward);
+  })
+
+  it("Tom withdraw his half LP", async function () {
+    const tomPending = await this.vault.pendingReward(this.tom.address);
+    const beforeCRV = await this.crvToken.balanceOf(this.tom.address);
+    const beforeCVX = await this.cvxToken.balanceOf(this.tom.address);
+
+    // withdraw
+    await expect(this.vault.connect(this.tom).withdraw(this.depositAmt)).to.emit(this.vault, "Withdraw").withArgs(this.tom.address, this.depositAmt);
+
+    const lpAmt = await this.lpToken.balanceOf(this.tom.address);
+    expect(lpAmt).to.be.eq(this.lpAmt - this.depositAmt);
+
+    const afterCRV = await this.crvToken.balanceOf(this.tom.address);
+    const afterCVX = await this.cvxToken.balanceOf(this.tom.address);
+
+    expect(afterCRV - beforeCRV, tomPending.crvReward);
+    expect(afterCVX - beforeCVX, tomPending.cvxReward);
+  })
+
+  it("Bob just do claim", async function () {
+    const bobPending = await this.vault.pendingReward(this.bob.address);
+    const beforeCRV = await this.crvToken.balanceOf(this.bob.address);
+    const beforeCVX = await this.cvxToken.balanceOf(this.bob.address);
+
+    // withdraw
+    await expect(this.vault.connect(this.bob).claim()).to.emit(this.vault, "Claim");
+
+    const lpAmt = await this.lpToken.balanceOf(this.bob.address);
+    expect(lpAmt).to.be.eq(this.lpAmt - this.depositAmt);
+
+    const afterCRV = await this.crvToken.balanceOf(this.bob.address);
+    const afterCVX = await this.cvxToken.balanceOf(this.bob.address);
+
+    expect(afterCRV - beforeCRV, bobPending.crvReward);
+    expect(afterCVX - beforeCVX, bobPending.cvxReward);
+  });
+
+  it("Pass other 1 day and check pendingReward", async function () {
+    await increaseTime(24);
+
+    const alicePending = await this.vault.pendingReward(this.alice.address);
+    const bobPending = await this.vault.pendingReward(this.bob.address);
+    const tomPending = await this.vault.pendingReward(this.tom.address);
+
+    expect(alicePending.crvReward).to.be.eq(0);
+    checkRange(bobPending.crvReward, tomPending.crvReward);
+    checkRange(bobPending.cvxReward, tomPending.cvxReward);
+  })
+
+  it("check Alice, Bob and Tom's userinfo", async function () {
+    const aliceInfo = await this.vault.userInfo(this.alice.address);
+    expect(aliceInfo.amount).to.be.eq(0)
+
+    const bobInfo = await this.vault.userInfo(this.bob.address);
+    expect(bobInfo.amount).to.be.eq(this.depositAmt)
+
+    const tomInfo = await this.vault.userInfo(this.tom.address);
+    expect(tomInfo.amount).to.be.eq(this.depositAmt)
+  })
+
+  it("Bob can withdraw", async function () {
+    // withdraw
+    await expect(this.vault.connect(this.bob).withdraw(MaxUint256)).to.emit(this.vault, "Withdraw").withArgs(this.bob.address, this.depositAmt);
+
+    // check lpamt
+    const lpAmt = await this.lpToken.balanceOf(this.bob.address);
+    expect(lpAmt).to.be.eq(this.lpAmt);
+  })
+
+  it("Tom can withdraw remaining amount", async function () {
+    // withdraw
+    await expect(this.vault.connect(this.tom).withdraw(MaxUint256)).to.emit(this.vault, "Withdraw").withArgs(this.tom.address, this.depositAmt);
+
+    // check lpamt
+    const lpAmt = await this.lpToken.balanceOf(this.tom.address);
+    expect(lpAmt).to.be.eq(this.lpAmt);
   })
 })

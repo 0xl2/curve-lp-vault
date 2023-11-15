@@ -7,22 +7,17 @@ import "./interfaces/ICVX.sol";
 import "./interfaces/IBooster.sol";
 import "./interfaces/IBaseRewardPool.sol";
 
-import "hardhat/console.sol";
-
 error ZeroAmount();
 
 contract Vault {
     using SafeERC20 for ICVX;
     using SafeERC20 for IERC20;
 
-    IERC20 public constant CRVToken =
-        IERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
-    ICVX public constant CVXToken =
-        ICVX(0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B);
+    IERC20 public constant CRVToken = IERC20(0xD533a949740bb3306d119CC777fa900bA034cd52);
+    ICVX public constant CVXToken = ICVX(0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B);
     // IClaimZap public constant CLAIMZAP =
     //     IClaimZap(0x3f29cB4111CbdA8081642DA1f75B3c12DECf2516);
-    IBooster public constant CVXBooster =
-        IBooster(0xF403C135812408BFbE8713b5A23a04b3D48AAE31);
+    IBooster public constant CVXBooster = IBooster(0xF403C135812408BFbE8713b5A23a04b3D48AAE31);
     IBaseRewardPool public immutable REWARDPOOL;
 
     IERC20 public lpToken;
@@ -60,16 +55,12 @@ contract Vault {
         UserInfo storage info = userInfo[msg.sender];
         unchecked {
             if (crvPerShare > info.crvShare) {
-                info.crvPending +=
-                    (info.amount * (crvPerShare - info.crvShare)) /
-                    MULTIPLIER;
+                info.crvPending += (info.amount * (crvPerShare - info.crvShare)) / MULTIPLIER;
                 info.crvShare = crvPerShare;
             }
 
             if (cvxPerShare > info.cvxShare) {
-                info.cvxPending +=
-                    (info.amount * (cvxPerShare - info.cvxShare)) /
-                    MULTIPLIER;
+                info.cvxPending += (info.amount * (cvxPerShare - info.cvxShare)) / MULTIPLIER;
                 info.cvxShare = cvxPerShare;
             }
         }
@@ -94,26 +85,18 @@ contract Vault {
             crvBalance = CRVToken.balanceOf(address(this)) - crvBalance;
         }
 
-        if (cvxBalance != 0)
-            cvxPerShare += (cvxBalance * MULTIPLIER) / totalDeposit;
+        if (cvxBalance != 0) cvxPerShare += (cvxBalance * MULTIPLIER) / totalDeposit;
 
-        if (crvBalance != 0)
-            crvPerShare += (crvBalance * MULTIPLIER) / totalDeposit;
+        if (crvBalance != 0) crvPerShare += (crvBalance * MULTIPLIER) / totalDeposit;
     }
 
-    function _getPending(
-        UserInfo memory info
-    ) internal view returns (uint crvAmt, uint cvxAmt) {
+    function _getPending(UserInfo memory info) internal view returns (uint crvAmt, uint cvxAmt) {
         crvAmt = crvPerShare > info.crvShare
-            ? info.crvPending +
-                (info.amount * (crvPerShare - info.crvShare)) /
-                MULTIPLIER
+            ? info.crvPending + (info.amount * (crvPerShare - info.crvShare)) / MULTIPLIER
             : info.crvPending;
 
         cvxAmt = cvxPerShare > info.cvxShare
-            ? info.cvxPending +
-                (info.amount * (cvxPerShare - info.cvxShare)) /
-                MULTIPLIER
+            ? info.cvxPending + (info.amount * (cvxPerShare - info.cvxShare)) / MULTIPLIER
             : info.cvxPending;
     }
 
@@ -141,6 +124,8 @@ contract Vault {
 
         UserInfo storage info = userInfo[msg.sender];
         if (amount > info.amount) amount = info.amount;
+
+        if (amount == 0) return;
 
         // get reward first
         _getReward(amount, true);
@@ -213,30 +198,18 @@ contract Vault {
         return _amount;
     }
 
-    function pendingReward(
-        address account
-    ) external view returns (uint crvReward, uint cvxReward) {
+    function pendingReward(address account) external view returns (uint crvReward, uint cvxReward) {
         if (totalDeposit == 0) return (0, 0);
 
         crvReward = REWARDPOOL.earned(address(this));
         cvxReward = _getCVXReward(crvReward);
 
-        uint _crvPerShare = crvReward == 0
-            ? crvPerShare
-            : crvPerShare + ((crvReward * MULTIPLIER) / totalDeposit);
-        uint _cvxPerShare = cvxReward == 0
-            ? cvxPerShare
-            : cvxPerShare + ((cvxReward * MULTIPLIER) / totalDeposit);
+        uint _crvPerShare = crvReward == 0 ? crvPerShare : crvPerShare + ((crvReward * MULTIPLIER) / totalDeposit);
+        uint _cvxPerShare = cvxReward == 0 ? cvxPerShare : cvxPerShare + ((cvxReward * MULTIPLIER) / totalDeposit);
 
         UserInfo memory info = userInfo[account];
-        crvReward =
-            info.crvPending +
-            (info.amount * (_crvPerShare - info.crvShare)) /
-            MULTIPLIER;
+        crvReward = info.crvPending + (info.amount * (_crvPerShare - info.crvShare)) / MULTIPLIER;
 
-        cvxReward =
-            info.cvxPending +
-            (info.amount * (_cvxPerShare - info.cvxShare)) /
-            MULTIPLIER;
+        cvxReward = info.cvxPending + (info.amount * (_cvxPerShare - info.cvxShare)) / MULTIPLIER;
     }
 }
