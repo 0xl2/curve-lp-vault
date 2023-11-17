@@ -8,7 +8,7 @@ interface ICurveRouter {
 
     function add_liquidity(uint256[4] memory, uint256) external payable;
 
-    function remove_liquidity_one_coin(uint256, uint256, uint256) external;
+    function remove_liquidity_one_coin(uint256, int128, uint256) external;
 
     function coins(uint256) external view returns (address);
 }
